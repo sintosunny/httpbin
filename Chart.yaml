@@ -1,0 +1,15 @@
+apiVersion: v2
+name: httpbin
+description: Helm chart to install httpbingo.org on Kubernetes
+type: application
+version: 0.1.2
+appVersion: "v2.13.2"
+keywords:
+  - httpbin
+sources:
+  - https://github.com/matheusfm/httpbin-chart
+  - https://github.com/mccutchen/go-httpbin
+maintainers:
+  - name: Matheus Moraes
+    email: matheusfaria.moraes@gmail.com
+    url: https://matheusfm.dev
