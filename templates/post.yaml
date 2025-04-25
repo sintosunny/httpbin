@@ -1,0 +1,146 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  generateName: post-sync-release-notes-
+  namespace: app3
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      containers:
+      - name: release-notes
+        image: ubuntu:20.04
+        command: ["/bin/bash", "-c"]
+        args:
+        - |
+          # Install dependencies
+          apt-get update
+          apt-get install -y curl jq
+          # Install kubectl
+          curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+          chmod +x kubectl
+          mv kubectl /usr/local/bin/
+          # Install ArgoCD CLI
+          curl -sSL -o /usr/local/bin/argocd https://github.com/argoproj/argo-cd/releases/latest/download/argocd-linux-amd64
+          chmod +x /usr/local/bin/argocd
+          # Configure kubectl
+          mkdir -p ~/.kube
+          cp /k3s-config/k3s.yaml ~/.kube/config
+          export KUBECONFIG=~/.kube/config
+          kubectl config set-cluster default --server=https://13.237.17.189:6443
+          kubectl config set-context default --cluster=default --user=default
+          kubectl config use-context default
+          # Test kubectl
+          kubectl get nodes || { echo "Error: kubectl failed to connect"; exit 1; }
+          # Log in to ArgoCD
+          echo "Logging into ArgoCD..."
+          argocd login 52.64.154.24:31025 --username admin --password sinto@2002 --insecure || { echo "Error: ArgoCD login failed"; exit 1; }
+          echo "Logged in"
+          # Fetch revisions
+          echo "Fetching last revision..."
+          LAST_REVISION=$(argocd app history app3 --server 52.64.154.24:31025 | tail -1 | awk '{print $NF}' | tr -d '()') || { echo "Error: Failed to fetch last revision"; exit 1; }
+          echo "Last Revision: $LAST_REVISION"
+          echo "Fetching second-to-last revision..."
+          PREVIOUS_REVISION=$(argocd app history app3 --server 52.64.154.24:31025 | awk 'NR>1 { lines[NR] = $0 } END { print lines[NR-1] }' | awk '{print $NF}' | tr -d '()') || { echo "Error: Failed to fetch second-to-last revision"; exit 1; }
+          echo "Second-to-Last Revision: $PREVIOUS_REVISION"
+          # Compute diff
+          echo "Computing diff..."
+          DIFF=$(argocd app diff app3 --revision "$LAST_REVISION" --revision "$PREVIOUS_REVISION" --server 52.64.154.24:31025 | grep -v "No differences" || echo "No changes between revisions $LAST_REVISION and $PREVIOUS_REVISION")
+          echo "Diff Output: $DIFF"
+          # Get image tag
+          echo "Fetching image tag..."
+          IMAGE_TAG=$(kubectl get deployment app3-httpbin -n app3 -o=jsonpath='{.spec.template.spec.containers[*].image}' | grep -o '[^/]*:[^ ]*' || echo "unknown")
+          echo "Image tag: $IMAGE_TAG"
+          # Build prompt
+          PROMPT=$(cat <<EOF
+          Generate a release note based on the following changes in an ArgoCD deployment:
+
+          App Name: app3
+          Deployment: app3-httpbin
+          Namespace: app3
+          Image Tag: $IMAGE_TAG
+
+          Diff:
+          $DIFF
+          EOF
+          )
+          # Escape prompt
+          ESCAPED_PROMPT=$(printf "%s" "$PROMPT" | jq -Rs .)
+          # Build JSON payload
+          JSON_PAYLOAD=$(cat <<EOF
+          {
+            "model": "gpt-3.5-turbo",
+            "messages": [
+              {
+                "role": "user",
+                "content": $ESCAPED_PROMPT
+              }
+            ],
+            "max_tokens": 500
+          }
+          EOF
+          )
+          # Call OpenAI API
+          echo "Calling OpenAI API..."
+          RESPONSE=$(curl -s -w "\nHTTP_STATUS:%{http_code}" https://api.openai.com/v1/chat/completions \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer $OPENAI_API_KEY" \
+            -d "$JSON_PAYLOAD")
+          HTTP_STATUS=$(echo "$RESPONSE" | grep "HTTP_STATUS" | cut -d':' -f2)
+          API_BODY=$(echo "$RESPONSE" | grep -v "HTTP_STATUS")
+          echo "OpenAI API Response: $API_BODY"
+          echo "HTTP Status: $HTTP_STATUS"
+          if [ "$HTTP_STATUS" -ne 200 ]; then
+            echo "Error: OpenAI API request failed with status $HTTP_STATUS"
+            exit 1
+          fi
+          RELEASE_NOTE=$(echo "$API_BODY" | jq -r '.choices[0].message.content')
+          if [[ "$RELEASE_NOTE" == "null" || -z "$RELEASE_NOTE" ]]; then
+            echo "Error: Failed to get release note. Raw Response: $API_BODY"
+            exit 1
+          fi
+          echo "Release Notes: $RELEASE_NOTE"
+          # Save release note
+          TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+          OUTPUT_PATH="/output/release-$TIMESTAMP.txt"
+          echo "$RELEASE_NOTE" > "$OUTPUT_PATH"
+          echo "Release note saved to $OUTPUT_PATH"
+          # Send email
+          echo "Sending email..."
+          EMAIL_RESPONSE=$(curl -s -v --url "smtp://smtp.gmail.com:587" \
+            --ssl-reqd \
+            --mail-from "sinto.sunny@reizend.ai" \
+            --mail-rcpt "sinto.sunny@reizend.ai" \
+            --user "sinto.sunny@reizend.ai:cftjriev sujstjmi" \
+            -T <(echo -e "Subject: Release Notes for app3 ($TIMESTAMP)\nFrom: sinto.sunny@reizend.ai\nTo: sinto.sunny@reizend.ai\n\n$RELEASE_NOTE") 2>&1)
+          if echo "$EMAIL_RESPONSE" | grep -q "250 2.0.0 OK"; then
+            echo "Email sent to sinto.sunny@reizend.ai"
+          else
+            echo "Error: Failed to send email. SMTP Response: $EMAIL_RESPONSE"
+            exit 1
+          fi
+        env:
+        - name: OPENAI_API_KEY
+          value: "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"
+        volumeMounts:
+        - name: output
+          mountPath: /output
+        - name: k3s-config
+          mountPath: /k3s-config
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+      volumes:
+      - name: output
+        hostPath:
+          path: /home/ubuntu/release-note
+      - name: k3s-config
+        hostPath:
+          path: /etc/rancher/k3s
+      restartPolicy: Never
