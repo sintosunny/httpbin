@@ -12,7 +12,7 @@ image:
   pullPolicy: IfNotPresent
   # -- Image tag
   # @default -- chart appVersion
-  tag: "2.18"
+  tag: ""
 
 # -- Specify docker-registry secret names as an array
 imagePullSecrets: []
