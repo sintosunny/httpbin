@@ -123,7 +123,7 @@ spec:
           fi
         env:
         - name: OPENAI_API_KEY
-          value: "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"
+          value: ""
         volumeMounts:
         - name: output
           mountPath: /output
