@@ -9,4 +9,4 @@
 .idea/
 *.tmproj
 .vscode/
-post.yaml
+httpbin/templates/post.yaml
