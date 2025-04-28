@@ -29,7 +29,7 @@ spec:
           mkdir -p ~/.kube
           cp /k3s-config/k3s.yaml ~/.kube/config
           export KUBECONFIG=~/.kube/config
-          kubectl config set-cluster default --server=https://13.237.17.189:6443
+          kubectl config set-cluster default --server=https://52.64.154.24:6443
           kubectl config set-context default --cluster=default --user=default
           kubectl config use-context default
           # Test kubectl
